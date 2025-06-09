@@ -1,0 +1,3 @@
+data_diff
+dependency_finder
+przyklad_wtyczki
