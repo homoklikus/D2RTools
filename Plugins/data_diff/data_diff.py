@@ -1,19 +1,33 @@
 PLUGIN_NAME = "Data Diff"
-PLUGIN_VERSION = "0.8"
-PLUGIN_DESCRIPTION = "Porównuje dwa foldery data – wykrywa zmiany plików i umożliwia diff TXT/JSON w tabelce (obsługa JSON: dict & lista)."
+PLUGIN_VERSION = "1.8"
+PLUGIN_DESCRIPTION = "Porównuje dwa foldery data: TXT (diff), JSON, sprite, filtry, popupy"
 PLUGIN_AUTHOR = "Precell & ChatGPT"
 PLUGIN_OK = True
 
 import os
-import json
+import struct
 from PyQt5.QtWidgets import (
     QDialog, QVBoxLayout, QLabel, QPushButton, QHBoxLayout, QFileDialog,
-    QTableWidget, QTableWidgetItem, QWidget, QHeaderView, QComboBox, QLineEdit, QSpacerItem, QSizePolicy
+    QTableWidget, QTableWidgetItem, QWidget, QHeaderView, QComboBox,
+    QLineEdit, QSpacerItem, QSizePolicy, QCheckBox, QTextEdit, QFrame
 )
 from PyQt5.QtCore import Qt, QSettings
 from PyQt5.QtGui import QColor
 
+from diff_txt_popup import DiffTextPopup
+from diff_json_popup import DiffJsonPopup   # <--- Zmieniono nazwę importu
+from diff_sprite_popup import SpriteDiffPopup
+
 ITEMS_PER_PAGE = 100
+
+DIFF_COLOR_ADDED_BG = "#26712b"
+DIFF_COLOR_REMOVED_BG = "#8a2121"
+DIFF_COLOR_CHANGED_BG = "#7c4700"
+DIFF_COLOR_CHANGED_TXT = "#fff"
+DIFF_COLOR_NUMBER = "#bbbbbb"
+
+COLOR_ORG_DIFF = QColor("#8a2121")
+COLOR_MOD_DIFF = QColor("#26712b")
 
 def register_plugin(main_window):
     if hasattr(main_window, "plugins_menu"):
@@ -34,6 +48,26 @@ def get_friendly_folder_name(folder_path):
     if base.lower() == "data":
         return os.path.basename(os.path.dirname(folder))
     return base
+
+def load_sprite(filename):
+    with open(filename, "rb") as f:
+        data = f.read()
+    if data[0:1] != b"S" or data[3:4] != b"1":
+        raise ValueError(f"{filename}: nietypowy nagłówek {data[0:4]}")
+    version = struct.unpack_from("<H", data, 4)[0]
+    if version != 31:
+        raise NotImplementedError("Obsługiwane tylko sprite'y w wersji 31 (RGBA)")
+    width = struct.unpack_from("<I", data, 8)[0]
+    height = struct.unpack_from("<I", data, 12)[0]
+    frame_count = struct.unpack_from("<I", data, 0x14)[0] if len(data) >= 0x18 else 1
+    pixels_per_frame = width * height
+    frame_size = pixels_per_frame * 4
+    offset = 0x28
+    if offset + frame_size > len(data):
+        raise ValueError("Dane sprite'a są niekompletne")
+    from PIL import Image
+    img = Image.frombytes("RGBA", (width, height), raw)
+    return img
 
 class DataDiffDialog(QDialog):
     def __init__(self, parent=None):
@@ -201,9 +235,9 @@ class DataDiffDialog(QDialog):
             self.table.insertRow(row)
             typ_item = QTableWidgetItem(typ)
             if typ == "Nowy plik":
-                typ_item.setForeground(Qt.green)
+                typ_item.setForeground(QColor("#26712b"))
             elif typ == "Podmieniony":
-                typ_item.setForeground(Qt.darkYellow)
+                typ_item.setForeground(QColor("#7c4700"))
             self.table.setItem(row, 0, typ_item)
             self.table.setItem(row, 1, QTableWidgetItem(path))
             self.table.setItem(row, 2, QTableWidgetItem(info or ""))
@@ -227,124 +261,22 @@ class DataDiffDialog(QDialog):
         if not typ_item or not path_item:
             return
         rel_path = path_item.text()
-        if not (rel_path.lower().endswith('.txt') or rel_path.lower().endswith('.json')):
-            return
         org_file = os.path.join(self.org_folder, rel_path)
         mod_file = os.path.join(self.mod_folder, rel_path)
-        if not (os.path.isfile(org_file) and os.path.isfile(mod_file)):
+        org_exists = os.path.isfile(org_file)
+        mod_exists = os.path.isfile(mod_file)
+        if not (org_exists or mod_exists):
             return
-        DiffTablePopup(org_file, mod_file, self).exec_()
-
-class DiffTablePopup(QDialog):
-    def __init__(self, org_file, mod_file, parent=None):
-        super().__init__(parent)
-        self.setWindowTitle("Porównanie plików")
-        self.setMinimumSize(1000, 650)
-        self.setWindowModality(Qt.ApplicationModal)  # wymusza focus nawet na sudo
-
-        layout = QVBoxLayout(self)
-        name = os.path.basename(org_file)
-        layout.addWidget(QLabel(f"<b>Plik:</b> {name}"))
-        table = QTableWidget(0, 2)
-        table.setHorizontalHeaderLabels(["Oryginał", "Mod"])
-        table.horizontalHeader().setSectionResizeMode(0, QHeaderView.Stretch)
-        table.horizontalHeader().setSectionResizeMode(1, QHeaderView.Stretch)
-        table.setEditTriggers(QTableWidget.NoEditTriggers)
-
-        if org_file.lower().endswith('.json'):
-            try:
-                with open(org_file, "r", encoding="utf-8-sig") as f1:
-                    try:
-                        org_data = json.load(f1)
-                    except Exception:
-                        org_data = None
-                with open(mod_file, "r", encoding="utf-8-sig") as f2:
-                    try:
-                        mod_data = json.load(f2)
-                    except Exception:
-                        mod_data = None
-
-                if isinstance(org_data, list) and isinstance(mod_data, list):
-                    maxlen = max(len(org_data), len(mod_data))
-                    for i in range(maxlen):
-                        v1 = org_data[i] if i < len(org_data) else "<brak>"
-                        v2 = mod_data[i] if i < len(mod_data) else "<brak>"
-                        row = table.rowCount()
-                        table.insertRow(row)
-                        if isinstance(v1, dict):
-                            txt1 = ", ".join(f"{k}:{v1[k]}" for k in v1)
-                        else:
-                            txt1 = str(v1)
-                        if isinstance(v2, dict):
-                            txt2 = ", ".join(f"{k}:{v2[k]}" for k in v2)
-                        else:
-                            txt2 = str(v2)
-                        item1 = QTableWidgetItem(txt1)
-                        item2 = QTableWidgetItem(txt2)
-                        if v1 != v2:
-                            item1.setBackground(QColor("#ffd6d6"))
-                            item2.setBackground(QColor("#d6ffd6"))
-                        table.setItem(row, 0, item1)
-                        table.setItem(row, 1, item2)
-                elif isinstance(org_data, dict) and isinstance(mod_data, dict):
-                    all_keys = set(org_data.keys()) | set(mod_data.keys())
-                    for key in sorted(all_keys):
-                        v1 = org_data.get(key, "<brak>")
-                        v2 = mod_data.get(key, "<brak>")
-                        row = table.rowCount()
-                        table.insertRow(row)
-                        item1 = QTableWidgetItem(f"{key}: {v1}")
-                        item2 = QTableWidgetItem(f"{key}: {v2}")
-                        if v1 != v2:
-                            item1.setBackground(QColor("#ffd6d6"))
-                            item2.setBackground(QColor("#d6ffd6"))
-                        table.setItem(row, 0, item1)
-                        table.setItem(row, 1, item2)
-                else:
-                    table.setRowCount(1)
-                    table.setItem(0, 0, QTableWidgetItem("JSON nie jest dict/list"))
-                    table.setItem(0, 1, QTableWidgetItem("JSON nie jest dict/list"))
-            except Exception as e:
-                table.setRowCount(1)
-                table.setItem(0, 0, QTableWidgetItem("Błąd wczytywania JSON"))
-                table.setItem(0, 1, QTableWidgetItem(str(e)))
-        else:
-            try:
-                with open(org_file, "r", encoding="utf-8-sig") as f1:
-                    org_lines = f1.readlines()
-                with open(mod_file, "r", encoding="utf-8-sig") as f2:
-                    mod_lines = f2.readlines()
-            except Exception as e:
-                table.setRowCount(1)
-                table.setItem(0, 0, QTableWidgetItem("Błąd wczytywania TXT"))
-                table.setItem(0, 1, QTableWidgetItem(str(e)))
-                layout.addWidget(table)
-                btn = QPushButton("Zamknij")
-                btn.clicked.connect(self.accept)
-                layout.addWidget(btn)
-                return
-            maxlen = max(len(org_lines), len(mod_lines))
-            for i in range(maxlen):
-                l1 = org_lines[i].rstrip() if i < len(org_lines) else ""
-                l2 = mod_lines[i].rstrip() if i < len(mod_lines) else ""
-                row = table.rowCount()
-                table.insertRow(row)
-                item1 = QTableWidgetItem(l1)
-                item2 = QTableWidgetItem(l2)
-                if l1 != l2:
-                    item1.setBackground(QColor("#ffd6d6"))
-                    item2.setBackground(QColor("#d6ffd6"))
-                table.setItem(row, 0, item1)
-                table.setItem(row, 1, item2)
-
-        layout.addWidget(table)
-        btn = QPushButton("Zamknij")
-        btn.clicked.connect(self.accept)
-        layout.addWidget(btn)
-
-        self.activateWindow()
-        self.raise_()
-        self.setFocus()
+        if rel_path.lower().endswith('.sprite'):
+            popup = SpriteDiffPopup(org_file if org_exists else None, mod_file if mod_exists else None, self)
+            popup.exec_()
+            return
+        if rel_path.lower().endswith('.txt'):
+            DiffTextPopup(org_file if org_exists else None, mod_file if mod_exists else None, self, filename=rel_path).exec_()
+            return
+        if rel_path.lower().endswith('.json'):
+            DiffJsonPopup(org_file if org_exists else None, mod_file if mod_exists else None, self).exec_()  # <--- Zmieniono klasę popup
+            return
 
 def compare_data_folders(org_folder, mod_folder):
     changes = []

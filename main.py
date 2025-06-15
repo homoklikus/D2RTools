@@ -34,22 +34,32 @@ def load_plugins(main_window, plugins_folder="Plugins"):
         if not os.path.isdir(plugin_folder) or not os.path.isfile(plugin_file):
             print(f"Folder/plugin '{folder_name}' nie istnieje lub brak {folder_name}.py")
             continue
-        spec = importlib.util.spec_from_file_location(folder_name, plugin_file)
-        module = importlib.util.module_from_spec(spec)
+
+        # Dodaj katalog pluginu do sys.path na czas jego ładowania (by działały importy lokalne)
+        sys.path.insert(0, plugin_folder)
         try:
-            spec.loader.exec_module(module)
-            # Rozpoznawanie nagłówka
-            if (getattr(module, "PLUGIN_OK", False)
-                and hasattr(module, "PLUGIN_NAME")
-                and hasattr(module, "PLUGIN_DESCRIPTION")
-                and hasattr(module, "PLUGIN_VERSION")
-                and hasattr(module, "register_plugin")):
-                module.register_plugin(main_window)
-                print(f"Załadowano wtyczkę: {module.PLUGIN_NAME} v{module.PLUGIN_VERSION}")
-            else:
-                print(f"Wtyczka {folder_name} pominięta (brak nagłówka lub register_plugin).")
-        except Exception as e:
-            print(f"Błąd ładowania wtyczki {folder_name}: {e}")
+            spec = importlib.util.spec_from_file_location(folder_name, plugin_file)
+            module = importlib.util.module_from_spec(spec)
+            try:
+                spec.loader.exec_module(module)
+                # Rozpoznawanie nagłówka
+                if (getattr(module, "PLUGIN_OK", False)
+                    and hasattr(module, "PLUGIN_NAME")
+                    and hasattr(module, "PLUGIN_DESCRIPTION")
+                    and hasattr(module, "PLUGIN_VERSION")
+                    and hasattr(module, "register_plugin")):
+                    module.register_plugin(main_window)
+                    print(f"Załadowano wtyczkę: {module.PLUGIN_NAME} v{module.PLUGIN_VERSION}")
+                else:
+                    print(f"Wtyczka {folder_name} pominięta (brak nagłówka lub register_plugin).")
+            except Exception as e:
+                print(f"Błąd ładowania wtyczki {folder_name}: {e}")
+        finally:
+            # Po załadowaniu pluginu usuń jego katalog z sys.path
+            try:
+                sys.path.remove(plugin_folder)
+            except ValueError:
+                pass
 
 # ====== Główna aplikacja ======
 
@@ -58,7 +68,7 @@ LAST_FOLDER_KEY = "last_folder"
 class MainWindow(QWidget):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("D2R JSON Language Viewer – Eksplorer + Edytor")
+        self.setWindowTitle("D2RTools")
         self.resize(1280, 800)
 
         self.settings = QSettings("d2r_json_viewer", "d2r_json_viewer")
