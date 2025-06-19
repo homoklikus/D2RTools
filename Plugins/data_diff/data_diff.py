@@ -15,7 +15,7 @@ from PyQt5.QtCore import Qt, QSettings
 from PyQt5.QtGui import QColor
 
 from diff_txt_popup import DiffTextPopup
-from diff_json_popup import DiffJsonPopup   # <--- Zmieniono nazwę importu
+from diff_json_popup import DiffJsonPopup
 from diff_sprite_popup import SpriteDiffPopup
 
 ITEMS_PER_PAGE = 100
@@ -66,7 +66,7 @@ def load_sprite(filename):
     if offset + frame_size > len(data):
         raise ValueError("Dane sprite'a są niekompletne")
     from PIL import Image
-    img = Image.frombytes("RGBA", (width, height), raw)
+    img = Image.frombytes("RGBA", (width, height), data[offset:offset+frame_size])
     return img
 
 class DataDiffDialog(QDialog):
@@ -265,6 +265,8 @@ class DataDiffDialog(QDialog):
         mod_file = os.path.join(self.mod_folder, rel_path)
         org_exists = os.path.isfile(org_file)
         mod_exists = os.path.isfile(mod_file)
+        org_name = get_friendly_folder_name(self.org_folder)
+        mod_name = get_friendly_folder_name(self.mod_folder)
         if not (org_exists or mod_exists):
             return
         if rel_path.lower().endswith('.sprite'):
@@ -272,10 +274,23 @@ class DataDiffDialog(QDialog):
             popup.exec_()
             return
         if rel_path.lower().endswith('.txt'):
-            DiffTextPopup(org_file if org_exists else None, mod_file if mod_exists else None, self, filename=rel_path).exec_()
+            DiffTextPopup(
+                org_file if org_exists else None,
+                mod_file if mod_exists else None,
+                self,
+                filename=rel_path,
+                org_label=org_name,
+                mod_label=mod_name
+            ).exec_()
             return
         if rel_path.lower().endswith('.json'):
-            DiffJsonPopup(org_file if org_exists else None, mod_file if mod_exists else None, self).exec_()  # <--- Zmieniono klasę popup
+            DiffJsonPopup(
+                org_file if org_exists else None,
+                mod_file if mod_exists else None,
+                self,
+                org_label=org_name,
+                mod_label=mod_name
+            ).exec_()
             return
 
 def compare_data_folders(org_folder, mod_folder):
